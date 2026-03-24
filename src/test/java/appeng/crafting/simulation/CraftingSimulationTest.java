@@ -247,6 +247,36 @@ public class CraftingSimulationTest {
         // note that the pickaxe is only crafted once, and then reused!
     }
 
+    @Test
+    public void testReusableCatalystDoesNotForceSingleStepSimulation() {
+        var env = new SimulationEnv();
+
+        var catalyst = item(Items.DIAMOND_PICKAXE);
+        var base = item(Items.COBBLESTONE);
+        var intermediate = item(Items.STONE);
+        var output = item(Items.SMOOTH_STONE);
+
+        var intermediatePattern = env.addPattern(new ProcessingPatternBuilder(intermediate)
+                .addPreciseInput(1, base)
+                .addReusableInput(1, catalyst)
+                .build());
+        var outputPattern = env.addPattern(new ProcessingPatternBuilder(output)
+                .addPreciseInput(1, intermediate)
+                .addReusableInput(1, catalyst)
+                .build());
+
+        env.addStoredItem(catalyst);
+        env.addStoredItem(mult(base, 100));
+
+        var plan = env.runSimulation(mult(output, 100), CalculationStrategy.REPORT_MISSING_ITEMS);
+        assertThatPlan(plan)
+                .succeeded()
+                .patternsMatch(outputPattern, 100, intermediatePattern, 100)
+                .emittedMatch()
+                .usedMatch(catalyst, mult(base, 100))
+                .bytesMatch(5, 302, 2);
+    }
+
     /**
      * Ensure that the {@link CraftingSimulationState#ignore} call doesn't crash when the network has a fuzzy equivalent
      * item, but not the exact output.

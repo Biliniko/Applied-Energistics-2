@@ -18,6 +18,7 @@
 
 package appeng.crafting.pattern;
 
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -71,6 +72,18 @@ public class AECraftingPattern implements IPatternDetails, IMolecularAssemblerSu
      */
     @SuppressWarnings("unchecked")
     private final Map<Item, Boolean>[] isValidCache = new Map[9];
+    /**
+     * Exact-match cache for inputs with NBT such as damageable items. This avoids repeated recipe.matches(...) calls
+     * during crafting simulation when the same durability state is encountered multiple times.
+     */
+    @SuppressWarnings("unchecked")
+    private final Map<AEItemKey, Boolean>[] exactIsValidCache = new Map[9];
+    /**
+     * We also cache recipe remainder lookups because crafting simulation may ask for the same slot/template pair many
+     * times while planning nested crafts with container items or durability changes.
+     */
+    @SuppressWarnings("unchecked")
+    private final Map<AEItemKey, AEItemKey>[] remainderCache = new Map[9];
 
     public AECraftingPattern(AEItemKey definition, Level level) {
         this.definition = definition;
@@ -272,17 +285,27 @@ public class AECraftingPattern implements IPatternDetails, IMolecularAssemblerSu
         return sparseInputs[slot] != null;
     }
 
-    private ItemStack getRecipeRemainder(int slot, AEItemKey key) {
+    @Nullable
+    private AEItemKey getRecipeRemainder(int slot, AEItemKey key) {
+        var cache = remainderCache[slot];
+        if (cache != null && cache.containsKey(key)) {
+            return cache.get(key);
+        }
+
         // Note: no need to call assemble again since we can assume that the item is valid!
-        // Consider making this more efficient in the future? (e.g. cache the produced remainders)
 
         // Fill frame
         var previousStack = testFrame.removeItemNoUpdate(slot);
         testFrame.setItem(slot, key.toStack());
         // Get remainder
-        var remainder = recipe.getRemainingItems(testFrame).get(slot);
+        var remainder = AEItemKey.of(recipe.getRemainingItems(testFrame).get(slot));
         // Restore old stack in the frame
         testFrame.setItem(slot, previousStack);
+
+        if (cache == null) {
+            cache = remainderCache[slot] = new HashMap<>();
+        }
+        cache.put(key, remainder);
 
         return remainder;
     }
@@ -294,8 +317,12 @@ public class AECraftingPattern implements IPatternDetails, IMolecularAssemblerSu
      */
     @Nullable
     private Boolean getTestResult(int slot, AEItemKey what) {
-        if (what == null || what.hasTag()) {
+        if (what == null) {
             return null;
+        }
+        if (what.hasTag()) {
+            var exactCache = exactIsValidCache[slot];
+            return exactCache != null ? exactCache.get(what) : null;
         }
         var cache = isValidCache[slot];
         if (cache == null) {
@@ -306,13 +333,22 @@ public class AECraftingPattern implements IPatternDetails, IMolecularAssemblerSu
     }
 
     private void setTestResult(int slot, AEItemKey what, boolean result) {
-        if (what != null && !what.hasTag()) {
-            var cache = isValidCache[slot];
-            if (cache == null) {
-                cache = isValidCache[slot] = new IdentityHashMap<>();
-            }
-            cache.put(what.getItem(), result);
+        if (what == null) {
+            return;
         }
+        if (what.hasTag()) {
+            var exactCache = exactIsValidCache[slot];
+            if (exactCache == null) {
+                exactCache = exactIsValidCache[slot] = new HashMap<>();
+            }
+            exactCache.put(what, result);
+            return;
+        }
+        var cache = isValidCache[slot];
+        if (cache == null) {
+            cache = isValidCache[slot] = new IdentityHashMap<>();
+        }
+        cache.put(what.getItem(), result);
     }
 
     public GenericStack[] getSparseInputs() {
@@ -527,7 +563,7 @@ public class AECraftingPattern implements IPatternDetails, IMolecularAssemblerSu
         @Override
         public AEKey getRemainingKey(AEKey template) {
             if (template instanceof AEItemKey itemKey) {
-                return AEItemKey.of(getRecipeRemainder(slot, itemKey));
+                return getRecipeRemainder(slot, itemKey);
             }
             return null;
         }

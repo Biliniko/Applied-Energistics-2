@@ -18,8 +18,11 @@
 
 package appeng.crafting;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 import appeng.api.config.Actionable;
 import appeng.api.crafting.IPatternDetails;
@@ -33,6 +36,14 @@ import appeng.crafting.inv.CraftingSimulationState;
  * a list of child nodes for its inputs.
  */
 public class CraftingTreeProcess {
+    enum BatchingMode {
+        NORMAL,
+        EXACT_REUSABLE,
+        LIMIT_QTY
+    }
+
+    record BatchAnalysis(boolean limitQty, Set<CraftingTreeNode> exactReusableNodes) {
+    }
 
     private final CraftingTreeNode parent;
     final IPatternDetails details;
@@ -60,8 +71,8 @@ public class CraftingTreeProcess {
         for (int x = 0; x < inputs.length; ++x) {
             var input = inputs[x];
             var firstInput = input.getPossibleInputs()[0];
-            this.nodes.put(new CraftingTreeNode(cc, job, firstInput.what(), firstInput.amount(), this, x),
-                    input.getMultiplier());
+            var node = new CraftingTreeNode(cc, job, firstInput.what(), firstInput.amount(), this, x);
+            this.nodes.put(node, input.getMultiplier());
         }
     }
 
@@ -81,6 +92,7 @@ public class CraftingTreeProcess {
         for (IPatternDetails.IInput input : details.getInputs()) {
             var primaryInput = input.getPossibleInputs()[0];
             boolean isAnInput = false;
+            var remainder = input.getRemainingKey(primaryInput.what());
 
             for (var output : details.getOutputs()) {
                 if (output.what().matches(primaryInput)) {
@@ -93,25 +105,51 @@ public class CraftingTreeProcess {
                 this.limitQty = true;
             }
 
-            if (input.getRemainingKey(primaryInput.what()) != null) {
-                this.limitQty = this.containerItems = true;
+            if (remainder != null) {
+                this.containerItems = true;
             }
         }
     }
 
-    boolean limitsQuantity() {
-        return this.limitQty;
+    BatchAnalysis analyzeBatching(CraftingSimulationState inv) {
+        if (this.limitQty || !this.containerItems) {
+            return new BatchAnalysis(this.limitQty, Set.of());
+        }
+
+        var exactReusableNodes = Collections.newSetFromMap(new IdentityHashMap<CraftingTreeNode, Boolean>());
+        for (var node : this.nodes.keySet()) {
+            switch (node.getBatchingMode(inv)) {
+                case LIMIT_QTY -> {
+                    return new BatchAnalysis(true, Set.of());
+                }
+                case EXACT_REUSABLE -> exactReusableNodes.add(node);
+                case NORMAL -> {
+                }
+            }
+        }
+
+        return new BatchAnalysis(false, exactReusableNodes);
     }
 
     void request(CraftingSimulationState inv, long times)
             throws CraftBranchFailure, InterruptedException {
         this.job.handlePausing();
+        request(inv, times, analyzeBatching(inv));
+    }
+
+    void request(CraftingSimulationState inv, long times, BatchAnalysis batchAnalysis)
+            throws CraftBranchFailure, InterruptedException {
+        boolean limitQty = batchAnalysis.limitQty();
 
         var containerItems = this.containerItems ? new KeyCounter() : null;
 
         // request and remove inputs...
         for (var entry : this.nodes.entrySet()) {
-            entry.getKey().request(inv, entry.getValue() * times, containerItems);
+            long requestedAmount = entry.getValue() * times;
+            if (!limitQty && batchAnalysis.exactReusableNodes().contains(entry.getKey())) {
+                requestedAmount = entry.getValue();
+            }
+            entry.getKey().request(inv, requestedAmount, containerItems);
         }
 
         // by now we must have succeeded, otherwise an exception would have been thrown by request() above

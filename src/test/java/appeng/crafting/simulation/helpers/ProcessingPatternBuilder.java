@@ -100,6 +100,33 @@ public class ProcessingPatternBuilder {
         return this;
     }
 
+    public ProcessingPatternBuilder addReusableInput(long multiplier, GenericStack input) {
+        var possibleInputs = new GenericStack[] { input };
+        inputs.add(new IPatternDetails.IInput() {
+            @Override
+            public GenericStack[] getPossibleInputs() {
+                return possibleInputs;
+            }
+
+            @Override
+            public long getMultiplier() {
+                return multiplier;
+            }
+
+            @Override
+            public boolean isValid(AEKey candidate, Level level) {
+                return input.what().equals(candidate);
+            }
+
+            @Nullable
+            @Override
+            public AEKey getRemainingKey(AEKey template) {
+                return input.what().equals(template) ? template : null;
+            }
+        });
+        return this;
+    }
+
     public IPatternDetails build() {
         return new IPatternDetails() {
             @Override

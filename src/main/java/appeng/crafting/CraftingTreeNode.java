@@ -211,16 +211,18 @@ public class CraftingTreeNode {
             // Single branch: just query as much as we can and let it throw if that's not possible.
             final CraftingTreeProcess pro = this.nodes.get(0);
             var craftedPerPattern = pro.getOutputCount(this.what);
+            var batchAnalysis = pro.analyzeBatching(inv);
+            boolean limitQty = batchAnalysis.limitQty();
 
             while (pro.possible && totalRequestedItems > 0) {
                 long times;
-                if (pro.limitsQuantity()) {
+                if (limitQty) {
                     times = 1;
                 } else {
                     // Craft all at once!
                     times = (totalRequestedItems + craftedPerPattern - 1) / craftedPerPattern;
                 }
-                pro.request(inv, times);
+                pro.request(inv, times, batchAnalysis);
 
                 // by now we have succeeded, as request throws an exception in case of failure
                 // check how much was actually produced
@@ -284,6 +286,41 @@ public class CraftingTreeNode {
         } else {
             throw new CraftBranchFailure(this.what, totalRequestedItems);
         }
+    }
+
+    CraftingTreeProcess.BatchingMode getBatchingMode(CraftingSimulationState inv) {
+        if (this.parentInput == null) {
+            return CraftingTreeProcess.BatchingMode.NORMAL;
+        }
+
+        var possibleInputs = this.parentInput.getPossibleInputs();
+        var primaryInput = possibleInputs[0].what();
+        boolean exactReusableOnly = possibleInputs.length == 1;
+        boolean sawTemplate = false;
+
+        for (var template : getValidItemTemplates(inv)) {
+            sawTemplate = true;
+
+            var remainder = this.parentInput.getRemainingKey(template.key());
+            if (remainder == null) {
+                exactReusableOnly = false;
+                continue;
+            }
+
+            if (!exactReusableOnly || !template.key().equals(primaryInput) || !remainder.equals(template.key())) {
+                return CraftingTreeProcess.BatchingMode.LIMIT_QTY;
+            }
+        }
+
+        if (!sawTemplate) {
+            return this.parentInput.getRemainingKey(this.what) == null
+                    ? CraftingTreeProcess.BatchingMode.NORMAL
+                    : CraftingTreeProcess.BatchingMode.LIMIT_QTY;
+        }
+
+        return exactReusableOnly
+                ? CraftingTreeProcess.BatchingMode.EXACT_REUSABLE
+                : CraftingTreeProcess.BatchingMode.NORMAL;
     }
 
     // Only item stacks are supported.

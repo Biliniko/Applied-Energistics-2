@@ -187,13 +187,15 @@ public class CraftingCpuHelper {
         long maxTotal = template.amount() * multiplier;
         // Extract as much as possible.
         var extracted = inv.extract(template.key(), maxTotal, Actionable.SIMULATE);
-        if (extracted == 0)
+        if (extracted == 0) {
             return 0;
+        }
         // Adjust to have a whole number of templates.
         multiplier = extracted / template.amount();
         maxTotal = template.amount() * multiplier;
-        if (maxTotal == 0)
+        if (maxTotal == 0) {
             return 0;
+        }
         extracted = inv.extract(template.key(), maxTotal, Actionable.MODULATE);
         if (extracted == 0 || extracted != maxTotal) {
             throw new IllegalStateException("Failed to correctly extract whole number. Invalid simulation!");

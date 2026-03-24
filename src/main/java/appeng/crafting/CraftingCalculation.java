@@ -258,7 +258,6 @@ public class CraftingCalculation {
 
     private void logCraftingJob(ICraftingPlan plan) {
         if (AELog.isCraftingLogEnabled()) {
-            ;
             var actionSource = this.simRequester.getActionSource();
             String actionSourceName;
 
